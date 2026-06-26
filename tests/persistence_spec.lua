@@ -280,6 +280,28 @@ describe("haunt.persistence", function()
 		end)
 	end)
 
+	describe("get_data_dir", function()
+		after_each(function()
+			persistence.set_data_dir(nil)
+		end)
+
+		it("returns the default data dir when no custom dir is set", function()
+			local config = require("haunt.config")
+			assert.are.equal(config.DEFAULT_DATA_DIR, persistence.get_data_dir())
+		end)
+
+		it("returns the custom data dir without creating it", function()
+			local temp_dir = vim.fn.tempname() .. "_haunt_get/"
+			persistence.set_data_dir(temp_dir)
+
+			assert.are.equal(0, vim.fn.isdirectory(temp_dir))
+			assert.are.equal(temp_dir, persistence.get_data_dir())
+			assert.are.equal(0, vim.fn.isdirectory(temp_dir))
+
+			vim.fn.delete(temp_dir, "rf")
+		end)
+	end)
+
 	describe("create_bookmark", function()
 		it("creates bookmark with all fields", function()
 			local bookmark = persistence.create_bookmark("/tmp/test.lua", 42, "Test note")

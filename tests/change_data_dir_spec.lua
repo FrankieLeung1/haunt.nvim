@@ -422,6 +422,20 @@ describe("change_data_dir", function()
 				assert.are.equal(config.DEFAULT_DATA_DIR, persistence.ensure_data_dir())
 			end)
 
+			it("does not create the old data_dir when switching away with no bookmarks", function()
+				bufnr, test_file = helpers.create_test_buffer({ "Line 1" })
+
+				local untouched_dir = vim.fn.tempname() .. "_haunt_untouched/"
+				persistence.set_data_dir(untouched_dir)
+				assert.are.equal(0, vim.fn.isdirectory(untouched_dir))
+
+				api.change_data_dir(data_dir_2)
+
+				assert.are.equal(0, vim.fn.isdirectory(untouched_dir))
+
+				helpers.cleanup_temp_dir(untouched_dir)
+			end)
+
 			it("handles multiple loaded buffers", function()
 				local bufnr1, test_file1 = helpers.create_test_buffer({ "File 1 Line 1", "File 1 Line 2" })
 				local bufnr2, test_file2 = helpers.create_test_buffer({ "File 2 Line 1", "File 2 Line 2" })

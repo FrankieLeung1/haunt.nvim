@@ -1028,7 +1028,7 @@ function M.change_data_dir(new_dir)
 	---@cast persistence -nil
 	---@cast hooks -nil
 
-	local old_dir = persistence.ensure_data_dir()
+	local old_dir = persistence.get_data_dir()
 
 	store.save()
 	persistence.set_data_dir(new_dir)

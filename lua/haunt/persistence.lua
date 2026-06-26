@@ -21,6 +21,7 @@
 
 ---@class PersistenceModule
 ---@field set_data_dir fun(dir: string|nil)
+---@field get_data_dir fun(): string
 ---@field ensure_data_dir fun(): string|nil, string|nil
 ---@field get_git_info fun(): {root: string|nil, branch: string|nil}
 ---@field get_storage_path fun(): string
@@ -70,8 +71,9 @@ function M.set_data_dir(dir)
 	custom_data_dir = expanded
 end
 
+--- Get the current data directory path without creating it.
 ---@return string data_dir The haunt data directory path
-local function get_data_dir()
+function M.get_data_dir()
 	local config = require("haunt.config")
 	return custom_data_dir or config.DEFAULT_DATA_DIR
 end
@@ -79,7 +81,7 @@ end
 --- Ensures the haunt data directory exists
 ---@return string data_dir The haunt data directory path
 function M.ensure_data_dir()
-	local data_dir = get_data_dir()
+	local data_dir = M.get_data_dir()
 	vim.fn.mkdir(data_dir, "p")
 	return data_dir
 end
@@ -87,7 +89,7 @@ end
 ---@param key string Pre-built keying string to hash into the filename
 ---@return string path
 local function path_for_key(key)
-	return get_data_dir() .. vim.fn.sha256(key):sub(1, 12) .. ".json"
+	return M.get_data_dir() .. vim.fn.sha256(key):sub(1, 12) .. ".json"
 end
 
 --- Generates a storage path for the current project and branch.
