@@ -749,6 +749,7 @@ Class ~
 {PersistenceModule}
 Fields ~
 {set_data_dir} `(fun(dir: string|nil))`
+{get_data_dir} `(fun(): string)`
 {ensure_data_dir} `(fun(): string|nil,)` string|nil
 {get_git_info} `(fun(): {root: string|nil, branch: string|nil})`
 {get_storage_path} `(fun(): string)`
@@ -777,8 +778,9 @@ Parameters ~
 {dir} `(string|nil)` Custom data directory path, or nil to reset to default
 
 ------------------------------------------------------------------------------
-                                                                *get_data_dir()*
-                                `get_data_dir`()
+                                                              *M.get_data_dir()*
+                               `M.get_data_dir`()
+Get the current data directory path without creating it.
 Return ~
 `(string)` data_dir The haunt data directory path
 
