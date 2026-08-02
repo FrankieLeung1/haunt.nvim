@@ -586,14 +586,15 @@ function M.clear()
 		return false
 	end
 
-	-- Get bookmarks before clearing for visual cleanup
-	local bookmarks = store.get_all_raw()
-	local file_bookmarks = {}
-	for _, bookmark in ipairs(bookmarks) do
-		if bookmark.file == current_file then
-			table.insert(file_bookmarks, bookmark)
-		end
-	end
+	-- Live store references, not copies: the visual cleanup and delete hooks
+	-- below need identity with the stored bookmarks.
+	local file_bookmarks = vim
+		.iter(store.get_all_raw())
+		---@param bookmark Bookmark
+		:filter(function(bookmark)
+			return bookmark.file == current_file
+		end)
+		:totable()
 
 	-- early return for no bookmarks
 	if #file_bookmarks == 0 then
@@ -740,7 +741,7 @@ function M.delete_by_id(bookmark_id)
 	---@cast store -nil
 	---@cast hooks -nil
 
-	local bookmark, _ = store.find_by_id(bookmark_id)
+	local bookmark = store.find_by_id(bookmark_id)
 	if not bookmark then
 		vim.notify("haunt.nvim: Bookmark not found", vim.log.levels.WARN)
 		return false

@@ -5,7 +5,7 @@
 ---@field reload fun()
 ---@field save fun(): boolean
 ---@field get_quickfix_items fun(opts?: QuickfixOpts): QuickfixItem[]
----@field find_by_id fun(bookmark_id: string): Bookmark|nil, number|nil
+---@field find_by_id fun(bookmark_id: string): Bookmark|nil
 ---@field get_bookmark_at_line fun(filepath: string, line: number): Bookmark|nil, number|nil
 ---@field get_sorted_bookmarks_for_file fun(filepath: string): Bookmark[]
 ---@field add_bookmark fun(bookmark: Bookmark)
@@ -156,14 +156,11 @@ end
 --- Find a bookmark by its ID
 ---@param bookmark_id string The unique ID of the bookmark to find
 ---@return Bookmark|nil bookmark The bookmark if found, nil otherwise
----@return number|nil index The index in the bookmarks array, nil if not found
 function M.find_by_id(bookmark_id)
-	for i, bm in ipairs(synced_bookmarks()) do
-		if bm.id == bookmark_id then
-			return bm, i
-		end
-	end
-	return nil, nil
+	---@param bookmark Bookmark
+	return vim.iter(synced_bookmarks()):find(function(bookmark)
+		return bookmark.id == bookmark_id
+	end)
 end
 
 --- Find a bookmark at a specific line in a file
@@ -177,13 +174,14 @@ function M.get_bookmark_at_line(filepath, line)
 		return nil, nil
 	end
 
-	for i, bookmark in ipairs(synced_bookmarks()) do
-		if bookmark.file == filepath and bookmark.line == line then
-			return bookmark, i
-		end
-	end
+	-- Iterate (index, bookmark) pairs so the index survives the pipeline;
+	-- `find` short-circuits on the first match and returns nil, nil otherwise.
+	---@param bookmark Bookmark
+	local i, found = vim.iter(ipairs(synced_bookmarks())):find(function(_, bookmark)
+		return bookmark.file == filepath and bookmark.line == line
+	end)
 
-	return nil, nil
+	return found, i
 end
 
 --- Get bookmarks for a specific file, sorted by their current line.
@@ -193,12 +191,13 @@ end
 ---@param filepath string The normalized file path
 ---@return Bookmark[] bookmarks Array of bookmarks for the file, sorted by line
 function M.get_sorted_bookmarks_for_file(filepath)
-	local file_bookmarks = {}
-	for _, bookmark in ipairs(synced_bookmarks()) do
-		if bookmark.file == filepath then
-			table.insert(file_bookmarks, bookmark)
-		end
-	end
+	local file_bookmarks = vim
+		.iter(synced_bookmarks())
+		---@param bookmark Bookmark
+		:filter(function(bookmark)
+			return bookmark.file == filepath
+		end)
+		:totable()
 
 	table.sort(file_bookmarks, function(a, b)
 		return a.line < b.line
@@ -229,32 +228,36 @@ function M.get_quickfix_items(opts)
 		append_annotations = true
 	end
 
-	local current_file = nil
+	local filter_to_current_file = nil
 	if opts.current_buffer then
-		current_file = utils.normalize_filepath(vim.api.nvim_buf_get_name(0))
-		if current_file == "" then
+		filter_to_current_file = utils.normalize_filepath(vim.api.nvim_buf_get_name(0))
+		if filter_to_current_file == "" then
 			return {}
 		end
 	end
 
 	-- Build plain items straight off the live references — nothing here
 	-- mutates a bookmark, and the items themselves are what get sorted.
-	local items = {}
-	for _, bookmark in ipairs(synced_bookmarks()) do
-		if not current_file or bookmark.file == current_file then
+	local items = vim
+		.iter(synced_bookmarks())
+		---@param bookmark Bookmark
+		:filter(function(bookmark)
+			return not filter_to_current_file or bookmark.file == filter_to_current_file
+		end)
+		---@param bookmark Bookmark
+		:map(function(bookmark)
 			local text = "Haunt bookmark"
 			if append_annotations and bookmark.note and bookmark.note ~= "" then
 				text = bookmark.note
 			end
-
-			table.insert(items, {
+			return {
 				filename = bookmark.file, -- absolute path works best for quickfix
 				lnum = bookmark.line,
 				col = 1,
 				text = text,
-			})
-		end
-	end
+			}
+		end)
+		:totable()
 
 	table.sort(items, function(a, b)
 		if a.filename == b.filename then
