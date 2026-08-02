@@ -261,8 +261,6 @@ end
 ---@param opts? QuickfixOpts Options for filtering and formatting
 ---@return QuickfixItem[] items Quickfix items
 function M.get_quickfix_items(opts)
-	ensure_loaded()
-
 	opts = opts or {}
 
 	local append_annotations = opts.append_annotations
@@ -272,11 +270,11 @@ function M.get_quickfix_items(opts)
 
 	local current_buffer = opts.current_buffer or false
 
-	-- Work on a copy to avoid mutating store order
-	local active_bookmarks = {}
-	for _, bookmark in ipairs(bookmarks) do
-		table.insert(active_bookmarks, bookmark)
-	end
+	-- Source from get_bookmarks() rather than reading `bookmarks` directly: it
+	-- syncs lines from extmarks first, so quickfix entries point at where a
+	-- bookmark is *now*, not where it was when it was created. The copy it
+	-- returns is also safe to sort without disturbing store order.
+	local active_bookmarks = M.get_bookmarks()
 
 	if current_buffer then
 		local current_file = utils.normalize_filepath(vim.api.nvim_buf_get_name(0))
