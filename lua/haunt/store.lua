@@ -235,13 +235,36 @@ function M.get_bookmark_at_line(filepath, line)
 	return nil, nil
 end
 
---- Get sorted bookmarks for a specific file
---- O(1) lookup from file-based index (already sorted)
+--- Get bookmarks for a specific file, sorted by their current line.
+---
+--- `bookmarks_by_file` gives an O(k) membership lookup for the file, but its
+--- *order* cannot be trusted: it is a binary insert keyed on line-at-insert-time
+--- and is only rebuilt on load, while `sync_lines_from_extmarks` reassigns
+--- `bookmark.line` in place as text is edited. The index holds references to the
+--- same tables, so synced values show through — the ordering does not. Navigation
+--- (`[h` / `]h`) scans for the first bookmark past the cursor and needs ascending
+--- order, so sort after syncing.
+---
+--- Returns a fresh array of live bookmark references (not copies) — callers pass
+--- them straight to hooks, which expect identity with the stored bookmark.
 ---@param filepath string The normalized file path
----@return Bookmark[] bookmarks Sorted array of bookmarks for the file
+---@return Bookmark[] bookmarks Array of bookmarks for the file, sorted by line
 function M.get_sorted_bookmarks_for_file(filepath)
 	ensure_loaded()
-	return bookmarks_by_file[filepath] or {}
+
+	local file_bookmarks = bookmarks_by_file[filepath]
+	if not file_bookmarks or #file_bookmarks == 0 then
+		return {}
+	end
+
+	sync_lines_from_extmarks()
+
+	local sorted = vim.list_slice(file_bookmarks, 1, #file_bookmarks)
+	table.sort(sorted, function(a, b)
+		return a.line < b.line
+	end)
+
+	return sorted
 end
 
 --- Get all bookmarks as a deep copy.
