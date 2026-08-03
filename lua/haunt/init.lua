@@ -291,6 +291,7 @@ end
 ---@private
 function M.setup_autocmds()
 	local augroup = vim.api.nvim_create_augroup("haunt_autosave", { clear = true })
+	local quickfix_augroup = vim.api.nvim_create_augroup("haunt_quickfix", { clear = true })
 
 	vim.api.nvim_create_autocmd("VimLeavePre", {
 		group = augroup,
@@ -316,6 +317,28 @@ function M.setup_autocmds()
 			end)
 		end,
 		desc = "Re-wrap above annotations to fit new window width",
+	})
+
+	vim.api.nvim_create_autocmd("WinEnter", {
+		group = quickfix_augroup,
+		callback = function()
+			local wininfo = vim.fn.getwininfo(vim.api.nvim_get_current_win())[1]
+			if not wininfo or wininfo.quickfix ~= 1 or wininfo.loclist == 1 then
+				return
+			end
+
+			local context = vim.fn.getqflist({ context = 0 }).context
+			if type(context) ~= "table" or context["haunt.nvim"] ~= true then
+				return
+			end
+
+			-- Neovim tracks quickfix item positions as the source buffer changes,
+			-- but an already-open quickfix buffer keeps its old rendered text.
+			local view = vim.fn.winsaveview()
+			vim.cmd("copen")
+			vim.fn.winrestview(view)
+		end,
+		desc = "Refresh Haunt quickfix entries when focused",
 	})
 end
 

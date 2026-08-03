@@ -793,6 +793,7 @@ function M.to_quickfix(opts)
 	vim.fn.setqflist({}, " ", {
 		title = title,
 		items = items,
+		context = { ["haunt.nvim"] = true },
 	})
 
 	utils.toggle_quickfix()
