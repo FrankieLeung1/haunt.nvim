@@ -219,6 +219,8 @@ describe("haunt user commands", function()
 	describe("HauntList", function()
 		local bufnr, test_file
 		local original_input
+		local original_ui_select
+		local ui_select_calls
 
 		before_each(function()
 			bufnr, test_file = helpers.create_test_buffer()
@@ -227,22 +229,36 @@ describe("haunt user commands", function()
 				return "Test"
 			end
 
+			-- No picker plugin is installed in the test env, so picker.show()
+			-- falls through to the vim.ui.select fallback. Neovim's default
+			-- implementation calls vim.fn.inputlist, which blocks on stdin and
+			-- hangs the headless run — stub it out and record the call instead.
+			ui_select_calls = {}
+			original_ui_select = vim.ui.select
+			vim.ui.select = function(items, opts, on_choice)
+				table.insert(ui_select_calls, { items = items, opts = opts, on_choice = on_choice })
+			end
+
 			vim.api.nvim_win_set_cursor(0, { 1, 0 })
 			vim.cmd("HauntAnnotate")
 		end)
 
 		after_each(function()
 			vim.fn.input = original_input
+			vim.ui.select = original_ui_select
 			helpers.cleanup_buffer(bufnr, test_file)
 		end)
 
 		it("calls picker.show without throwing", function()
-			-- HauntList requires Snacks.nvim which may not be installed in test env
-			-- We just verify the picker module can be required and show() can be called
 			local picker = require("haunt.picker")
 			local ok = pcall(picker.show)
-			-- Should not throw, even if Snacks is not available (it notifies instead)
 			assert.is_true(ok)
+		end)
+
+		it("HauntList reaches the picker", function()
+			vim.cmd("HauntList")
+
+			assert.are.equal(1, #ui_select_calls)
 		end)
 	end)
 
