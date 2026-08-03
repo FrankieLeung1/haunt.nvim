@@ -5,7 +5,7 @@
 ---@field reload fun()
 ---@field save fun(): boolean
 ---@field get_quickfix_items fun(opts?: QuickfixOpts): QuickfixItem[]
----@field find_by_id fun(bookmark_id: string): Bookmark|nil, number|nil
+---@field find_by_id fun(bookmark_id: string): Bookmark|nil
 ---@field get_bookmark_at_line fun(filepath: string, line: number): Bookmark|nil, number|nil
 ---@field get_sorted_bookmarks_for_file fun(filepath: string): Bookmark[]
 ---@field add_bookmark fun(bookmark: Bookmark)
@@ -36,12 +36,15 @@ local M = {}
 local utils = require("haunt.utils")
 
 ---@private
+--- The in-memory bookmark array. `bookmark.line` in here is a SNAPSHOT: it is
+--- authoritative only for persistence and for buffers that aren't loaded (no
+--- extmark to ask). While a buffer is loaded, the tracking extmark is the
+--- source of truth for position. Nothing outside `synced_bookmarks()` and the
+--- load/save boundary may read `.line` from this table directly - every
+--- public accessor goes through `synced_bookmarks()` so it cannot observe stale
+--- lines
 ---@type Bookmark[]
 local bookmarks = {}
-
----@private
----@type table<string, Bookmark[]>
-local bookmarks_by_file = {}
 
 ---@private
 ---@type boolean
@@ -85,69 +88,6 @@ end
 local function ensure_hooks()
 	if not hooks then
 		hooks = require("haunt.hooks")
-	end
-end
-
---- Add a bookmark to the file-based index
---- Maintains sorted order by line number using binary search insertion
----@param bookmark Bookmark The bookmark to add to the index
-local function add_to_file_index(bookmark)
-	if not bookmarks_by_file[bookmark.file] then
-		bookmarks_by_file[bookmark.file] = {}
-	end
-
-	local file_bookmarks = bookmarks_by_file[bookmark.file]
-
-	-- Binary search to find insertion point
-	local left, right = 1, #file_bookmarks
-	local insert_pos = #file_bookmarks + 1
-
-	while left <= right do
-		local mid = math.floor((left + right) / 2)
-		if file_bookmarks[mid].line < bookmark.line then
-			left = mid + 1
-		else
-			insert_pos = mid
-			right = mid - 1
-		end
-	end
-
-	table.insert(file_bookmarks, insert_pos, bookmark)
-end
-
---- Remove a bookmark from the file-based index
----@param bookmark Bookmark The bookmark to remove from the index
-local function remove_from_file_index(bookmark)
-	local file_bookmarks = bookmarks_by_file[bookmark.file]
-	if not file_bookmarks then
-		return
-	end
-
-	for i, bm in ipairs(file_bookmarks) do
-		if bm.id == bookmark.id then
-			table.remove(file_bookmarks, i)
-			-- Clean up empty file entries
-			if #file_bookmarks == 0 then
-				bookmarks_by_file[bookmark.file] = nil
-			end
-			break
-		end
-	end
-end
-
---- Clear all bookmarks for a specific file from the index
----@param filepath string The file path to clear from the index
-local function clear_file_from_index(filepath)
-	bookmarks_by_file[filepath] = nil
-end
-
---- Rebuild the entire file-based index from the bookmarks array
---- This is called after loading bookmarks from persistence
-local function rebuild_file_index()
-	bookmarks_by_file = {}
-
-	for _, bookmark in ipairs(bookmarks) do
-		add_to_file_index(bookmark)
 	end
 end
 
@@ -197,18 +137,30 @@ local function sync_lines_from_extmarks()
 	end
 end
 
+--- THE read funnel. Every public accessor that exposes bookmarks (or anything
+--- derived from their positions) goes through here — it is the only place
+--- outside persistence allowed to touch the raw array. Loading and syncing
+--- happen unconditionally, so no caller can observe a stale `.line` and the
+--- #72/#92/#99 class of bug cannot be reintroduced by a new getter.
+---
+--- Returns the LIVE internal array: cheap, and several internal callers
+--- (restoration, display toggles, hooks) rely on reference identity with the
+--- stored bookmark. Accessors that hand data to plugin users must copy.
+---@return Bookmark[] bookmarks Live references, lines synced from extmarks
+local function synced_bookmarks()
+	ensure_loaded()
+	sync_lines_from_extmarks()
+	return bookmarks
+end
+
 --- Find a bookmark by its ID
 ---@param bookmark_id string The unique ID of the bookmark to find
 ---@return Bookmark|nil bookmark The bookmark if found, nil otherwise
----@return number|nil index The index in the bookmarks array, nil if not found
 function M.find_by_id(bookmark_id)
-	ensure_loaded()
-	for i, bm in ipairs(bookmarks) do
-		if bm.id == bookmark_id then
-			return bm, i
-		end
-	end
-	return nil, nil
+	---@param bookmark Bookmark
+	return vim.iter(synced_bookmarks()):find(function(bookmark)
+		return bookmark.id == bookmark_id
+	end)
 end
 
 --- Find a bookmark at a specific line in a file
@@ -217,31 +169,41 @@ end
 ---@return Bookmark|nil bookmark The bookmark at the line, or nil if none exists
 ---@return number|nil index The index of the bookmark in the bookmarks table
 function M.get_bookmark_at_line(filepath, line)
-	ensure_loaded()
-
 	-- If file has no name, can't have bookmarks
 	if filepath == "" then
 		return nil, nil
 	end
 
-	sync_lines_from_extmarks()
+	-- Iterate (index, bookmark) pairs so the index survives the pipeline;
+	-- `find` short-circuits on the first match and returns nil, nil otherwise.
+	---@param bookmark Bookmark
+	local i, found = vim.iter(ipairs(synced_bookmarks())):find(function(_, bookmark)
+		return bookmark.file == filepath and bookmark.line == line
+	end)
 
-	for i, bookmark in ipairs(bookmarks) do
-		if bookmark.file == filepath and bookmark.line == line then
-			return bookmark, i
-		end
-	end
-
-	return nil, nil
+	return found, i
 end
 
---- Get sorted bookmarks for a specific file
---- O(1) lookup from file-based index (already sorted)
+--- Get bookmarks for a specific file, sorted by their current line.
+---
+--- Returns a fresh array of live bookmark references (not copies) — callers
+--- pass them straight to hooks, which expect identity with the stored bookmark.
 ---@param filepath string The normalized file path
----@return Bookmark[] bookmarks Sorted array of bookmarks for the file
+---@return Bookmark[] bookmarks Array of bookmarks for the file, sorted by line
 function M.get_sorted_bookmarks_for_file(filepath)
-	ensure_loaded()
-	return bookmarks_by_file[filepath] or {}
+	local file_bookmarks = vim
+		.iter(synced_bookmarks())
+		---@param bookmark Bookmark
+		:filter(function(bookmark)
+			return bookmark.file == filepath
+		end)
+		:totable()
+
+	table.sort(file_bookmarks, function(a, b)
+		return a.line < b.line
+	end)
+
+	return file_bookmarks
 end
 
 --- Get all bookmarks as a deep copy.
@@ -251,9 +213,7 @@ end
 ---
 ---@return Bookmark[] bookmarks Array of all bookmarks
 function M.get_bookmarks()
-	ensure_loaded()
-	sync_lines_from_extmarks()
-	return vim.deepcopy(bookmarks)
+	return vim.deepcopy(synced_bookmarks())
 end
 
 --- Get bookmark locations as quickfix items.
@@ -261,8 +221,6 @@ end
 ---@param opts? QuickfixOpts Options for filtering and formatting
 ---@return QuickfixItem[] items Quickfix items
 function M.get_quickfix_items(opts)
-	ensure_loaded()
-
 	opts = opts or {}
 
 	local append_annotations = opts.append_annotations
@@ -270,64 +228,57 @@ function M.get_quickfix_items(opts)
 		append_annotations = true
 	end
 
-	local current_buffer = opts.current_buffer or false
-
-	-- Work on a copy to avoid mutating store order
-	local active_bookmarks = {}
-	for _, bookmark in ipairs(bookmarks) do
-		table.insert(active_bookmarks, bookmark)
-	end
-
-	if current_buffer then
-		local current_file = utils.normalize_filepath(vim.api.nvim_buf_get_name(0))
-		if current_file == "" then
+	local filter_to_current_file = nil
+	if opts.current_buffer then
+		filter_to_current_file = utils.normalize_filepath(vim.api.nvim_buf_get_name(0))
+		if filter_to_current_file == "" then
 			return {}
 		end
+	end
 
-		local filtered = {}
-		for _, bookmark in ipairs(active_bookmarks) do
-			if bookmark.file == current_file then
-				table.insert(filtered, bookmark)
+	-- Build plain items straight off the live references — nothing here
+	-- mutates a bookmark, and the items themselves are what get sorted.
+	local items = vim
+		.iter(synced_bookmarks())
+		---@param bookmark Bookmark
+		:filter(function(bookmark)
+			return not filter_to_current_file or bookmark.file == filter_to_current_file
+		end)
+		---@param bookmark Bookmark
+		:map(function(bookmark)
+			local text = "Haunt bookmark"
+			if append_annotations and bookmark.note and bookmark.note ~= "" then
+				text = bookmark.note
 			end
-		end
-		active_bookmarks = filtered
-	end
+			return {
+				filename = bookmark.file, -- absolute path works best for quickfix
+				lnum = bookmark.line,
+				col = 1,
+				text = text,
+			}
+		end)
+		:totable()
 
-	if #active_bookmarks == 0 then
-		return {}
-	end
-
-	table.sort(active_bookmarks, function(a, b)
-		if a.file == b.file then
-			return a.line < b.line
+	table.sort(items, function(a, b)
+		if a.filename == b.filename then
+			return a.lnum < b.lnum
 		end
-		return a.file < b.file
+		return a.filename < b.filename
 	end)
-
-	local items = {}
-	for _, bookmark in ipairs(active_bookmarks) do
-		local text = "Haunt bookmark"
-		if append_annotations and bookmark.note and bookmark.note ~= "" then
-			text = bookmark.note
-		end
-
-		table.insert(items, {
-			filename = bookmark.file, -- absolute path works best for quickfix
-			lnum = bookmark.line,
-			col = 1,
-			text = text,
-		})
-	end
 
 	return items
 end
 
---- Get raw reference to bookmarks array (for internal use only)
---- WARNING: Modifications to returned table affect internal state
+--- Get live references to all bookmarks (for internal use only).
+---
+--- This is the mutation channel: restoration and display toggles write extmark
+--- ids back onto the returned bookmarks, so they need identity with internal
+--- state — a copy would silently discard their writes.
+--- Lines are synced through the read funnel like every other accessor.
+--- WARNING: Modifications to the returned table affect internal state.
 ---@return Bookmark[] bookmarks Direct reference to bookmarks array
 function M.get_all_raw()
-	ensure_loaded()
-	return bookmarks
+	return synced_bookmarks()
 end
 
 --- Check if any bookmarks exist.
@@ -368,7 +319,6 @@ function M.load()
 	end
 
 	bookmarks = loaded_bookmarks
-	rebuild_file_index()
 	_loaded = true
 
 	local info = require("haunt.project").get_info()
@@ -390,7 +340,6 @@ end
 --- Used when changing data_dir to load from a new location.
 function M.reload()
 	bookmarks = {}
-	bookmarks_by_file = {}
 	_loaded = false
 	_loaded_project_id = nil
 	_loaded_project_root = nil
@@ -412,18 +361,20 @@ function M.save()
 	---@cast persistence -nil
 	---@cast hooks -nil
 
-	sync_lines_from_extmarks()
+	-- The funnel refreshes `.line` snapshots from extmarks; persistence then
+	-- serializes those snapshots. This is the only writer of snapshot state.
+	local synced = synced_bookmarks()
 
 	hooks.emit_pre_save({
-		bookmarks = bookmarks,
-		count = #bookmarks,
+		bookmarks = synced,
+		count = #synced,
 	})
 
-	local success = persistence.save_bookmarks(bookmarks, _loaded_storage_path, _loaded_project_root)
+	local success = persistence.save_bookmarks(synced, _loaded_storage_path, _loaded_project_root)
 
 	hooks.emit_post_save({
-		bookmarks = bookmarks,
-		count = #bookmarks,
+		bookmarks = synced,
+		count = #synced,
 		success = success,
 	})
 
@@ -458,7 +409,6 @@ end
 function M.add_bookmark(bookmark)
 	ensure_loaded()
 	table.insert(bookmarks, bookmark)
-	add_to_file_index(bookmark)
 end
 
 --- Remove a bookmark from the store
@@ -469,7 +419,6 @@ function M.remove_bookmark(bookmark)
 	for i, bm in ipairs(bookmarks) do
 		if bm.id == bookmark.id then
 			table.remove(bookmarks, i)
-			remove_from_file_index(bookmark)
 			return true
 		end
 	end
@@ -484,11 +433,7 @@ function M.remove_bookmark_at_index(index)
 	if index < 1 or index > #bookmarks then
 		return nil
 	end
-	local bookmark = table.remove(bookmarks, index)
-	if bookmark then
-		remove_from_file_index(bookmark)
-	end
-	return bookmark
+	return table.remove(bookmarks, index)
 end
 
 --- Clear all bookmarks for a specific file
@@ -511,9 +456,6 @@ function M.clear_file_bookmarks(filepath)
 		table.remove(bookmarks, indices_to_remove[i])
 	end
 
-	-- Clear from index
-	clear_file_from_index(filepath)
-
 	return removed
 end
 
@@ -523,7 +465,6 @@ function M.clear_all_bookmarks()
 	ensure_loaded()
 	local count = #bookmarks
 	bookmarks = {}
-	bookmarks_by_file = {}
 	return count
 end
 
@@ -533,7 +474,6 @@ end
 ---@private
 function M._reset_for_testing()
 	bookmarks = {}
-	bookmarks_by_file = {}
 	_loaded = true -- Prevent auto-loading from disk
 	_loaded_project_id = nil
 	_loaded_project_root = nil

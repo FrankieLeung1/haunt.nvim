@@ -127,20 +127,16 @@ describe("haunt.store", function()
 			store.add_bookmark({ file = "/test.lua", line = 10, id = "target" })
 			store.add_bookmark({ file = "/test.lua", line = 20, id = "other" })
 
-			local bookmark, index = store.find_by_id("target")
+			local bookmark = store.find_by_id("target")
 
 			assert.is_not_nil(bookmark)
 			assert.are.equal("target", bookmark.id)
-			assert.are.equal(1, index)
 		end)
 
 		it("returns nil for non-existent ID", function()
 			store.add_bookmark({ file = "/test.lua", line = 10, id = "exists" })
 
-			local bookmark, index = store.find_by_id("nonexistent")
-
-			assert.is_nil(bookmark)
-			assert.is_nil(index)
+			assert.is_nil(store.find_by_id("nonexistent"))
 		end)
 	end)
 
