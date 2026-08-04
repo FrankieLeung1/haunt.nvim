@@ -774,6 +774,35 @@ function M.delete_by_id(bookmark_id)
 	return true
 end
 
+---@private
+local function attach_quickfix_refresh()
+	local qfbufnr = vim.fn.getqflist({ qfbufnr = 0 }).qfbufnr
+	if qfbufnr == 0 then
+		return
+	end
+
+	local augroup = vim.api.nvim_create_augroup("haunt_quickfix", { clear = true })
+	vim.api.nvim_create_autocmd("BufEnter", {
+		group = augroup,
+		buffer = qfbufnr,
+		callback = function()
+			local qf = vim.fn.getqflist({ all = 0 })
+			if type(qf.context) ~= "table" or qf.context["haunt.nvim"] ~= true then
+				return
+			end
+
+			-- Replacing the items refreshes stale quickfix text and integration caches.
+			local view = vim.fn.winsaveview()
+			vim.fn.setqflist({}, "u", {
+				id = qf.id,
+				items = qf.items,
+			})
+			vim.fn.winrestview(view)
+		end,
+		desc = "Refresh Haunt quickfix entries when focused",
+	})
+end
+
 --- Populate the quickfix list with haunt bookmarks.
 ---
 ---@param opts? QuickfixOpts Options for filtering and formatting
@@ -793,9 +822,11 @@ function M.to_quickfix(opts)
 	vim.fn.setqflist({}, " ", {
 		title = title,
 		items = items,
+		context = { ["haunt.nvim"] = true },
 	})
 
 	utils.toggle_quickfix()
+	attach_quickfix_refresh()
 
 	return true
 end
