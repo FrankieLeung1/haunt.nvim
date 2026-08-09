@@ -922,4 +922,71 @@ describe("haunt.api", function()
 			assert.are.equal("updated note", bookmarks[1].note)
 		end)
 	end)
+
+	-- Regression: issue #99. Same stale-line class as #92, but on the quickfix
+	-- path: get_quickfix_items read the module-level bookmarks table directly
+	-- instead of going through get_bookmarks(), so it never synced from
+	-- extmarks. :HauntQf jumped to the on-create line until something else
+	-- (opening :HauntList, or a save) happened to sync as a side effect.
+	describe("quickfix lines follow extmarks (issue #99)", function()
+		local bufnr, test_file
+
+		before_each(function()
+			bufnr, test_file = helpers.create_test_buffer({ "line 1", "line 2", "line 3", "line 4" })
+			vim.api.nvim_win_set_cursor(0, { 3, 0 })
+			api.annotate("on line 3")
+		end)
+
+		after_each(function()
+			helpers.cleanup_buffer(bufnr, test_file)
+		end)
+
+		it("reports the synced lnum after lines are inserted above", function()
+			local store = require("haunt.store")
+
+			-- Sanity check: quickfix points at the creation line
+			local before = store.get_quickfix_items()
+			assert.are.equal(1, #before)
+			assert.are.equal(3, before[1].lnum)
+
+			vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, { "new top 1", "new top 2" })
+
+			local after = store.get_quickfix_items()
+			assert.are.equal(1, #after)
+			assert.are.equal(
+				5,
+				after[1].lnum,
+				"quickfix lnum should follow the extmark after 2 lines are inserted above (was "
+					.. tostring(after[1].lnum)
+					.. ")"
+			)
+		end)
+
+		it("does not require get_bookmarks to be called first", function()
+			-- The bug's tell: opening the picker repaired quickfix as a side
+			-- effect. Assert quickfix is correct on a cold read, with no
+			-- get_bookmarks() call in between.
+			local store = require("haunt.store")
+			vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, { "new top 1", "new top 2" })
+
+			assert.are.equal(5, store.get_quickfix_items()[1].lnum)
+		end)
+
+		it("sorts by the synced line, not the stale one", function()
+			local store = require("haunt.store")
+
+			-- Second bookmark below the first, then push only the first one
+			-- down past it so stale ordering and synced ordering disagree.
+			vim.api.nvim_win_set_cursor(0, { 4, 0 })
+			api.annotate("on line 4")
+
+			vim.api.nvim_buf_set_lines(bufnr, 3, 3, false, { "pushed", "down" })
+
+			local items = store.get_quickfix_items()
+			assert.are.equal(2, #items)
+			assert.is_true(items[1].lnum < items[2].lnum, "items must be sorted by current line")
+			assert.are.equal(3, items[1].lnum)
+			assert.are.equal(6, items[2].lnum)
+		end)
+	end)
 end)

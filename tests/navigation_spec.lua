@@ -247,4 +247,83 @@ describe("haunt.navigation", function()
 			assert.are.equal(1, pos3[1])
 		end)
 	end)
+
+	-- Regression: same stale-line family as #92/#99, on the navigation path.
+	-- get_sorted_bookmarks_for_file returned the file index without syncing
+	-- lines from extmarks, so `[h` / `]h` picked neighbours using the
+	-- on-create line instead of where the bookmark had moved to.
+	describe("navigation follows extmarks after edits", function()
+		local api
+
+		before_each(function()
+			local modules = helpers.setup_haunt()
+			api = modules.api
+			store = modules.store
+			navigation = modules.navigation
+
+			bufnr, test_file = helpers.create_test_buffer({
+				"line 1",
+				"line 2",
+				"line 3",
+				"line 4",
+				"line 5",
+				"line 6",
+			})
+
+			-- Bookmarks at lines 2 and 5, created through the real annotate
+			-- path so they carry tracking extmarks.
+			vim.api.nvim_win_set_cursor(0, { 2, 0 })
+			api.annotate("first")
+			vim.api.nvim_win_set_cursor(0, { 5, 0 })
+			api.annotate("second")
+		end)
+
+		it("jumps to the moved line, not the on-create line", function()
+			-- Push both bookmarks down by 3: extmarks now at lines 5 and 8.
+			vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, { "new 1", "new 2", "new 3" })
+
+			vim.api.nvim_win_set_cursor(0, { 1, 0 })
+			navigation.next()
+
+			local pos = vim.api.nvim_win_get_cursor(0)
+			assert.are.equal(5, pos[1], "should jump to the first bookmark's current line, not its stale line 2")
+		end)
+
+		it("does not wrap early using stale lines", function()
+			vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, { "new 1", "new 2", "new 3" })
+
+			-- Cursor sits between the two current positions (5 and 8). With
+			-- stale lines (2 and 5) nothing is past the cursor, so navigation
+			-- wrapped around to the first bookmark instead of advancing.
+			vim.api.nvim_win_set_cursor(0, { 6, 0 })
+			navigation.next()
+
+			local pos = vim.api.nvim_win_get_cursor(0)
+			assert.are.equal(8, pos[1], "should advance to the second bookmark rather than wrapping")
+		end)
+
+		it("prev uses moved lines too", function()
+			vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, { "new 1", "new 2", "new 3" })
+
+			-- Cursor above both current positions (5 and 8), so prev must wrap
+			-- to the last bookmark. With stale lines (2 and 5) it instead found
+			-- a "previous" bookmark at line 2 and jumped backwards.
+			vim.api.nvim_win_set_cursor(0, { 4, 0 })
+			navigation.prev()
+
+			local pos = vim.api.nvim_win_get_cursor(0)
+			assert.are.equal(8, pos[1], "should wrap to the last bookmark's current line")
+		end)
+
+		it("returns bookmarks sorted by current line", function()
+			vim.api.nvim_buf_set_lines(bufnr, 0, 0, false, { "new 1", "new 2", "new 3" })
+
+			local filepath = require("haunt.utils").normalize_filepath(test_file)
+			local sorted = store.get_sorted_bookmarks_for_file(filepath)
+
+			assert.are.equal(2, #sorted)
+			assert.are.equal(5, sorted[1].line)
+			assert.are.equal(8, sorted[2].line)
+		end)
+	end)
 end)

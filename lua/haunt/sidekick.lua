@@ -72,13 +72,13 @@ function M.get_locations(opts)
 	-- Filter to current buffer if requested
 	if current_buffer then
 		local current_file = vim.fn.fnamemodify(vim.api.nvim_buf_get_name(0), ":p")
-		local filtered = {}
-		for _, bookmark in ipairs(bookmarks) do
-			if bookmark.file == current_file then
-				table.insert(filtered, bookmark)
-			end
-		end
-		bookmarks = filtered
+		bookmarks = vim
+			.iter(bookmarks)
+			---@param bookmark Bookmark
+			:filter(function(bookmark)
+				return bookmark.file == current_file
+			end)
+			:totable()
 	end
 
 	-- If no bookmarks after filtering, return empty string
@@ -95,18 +95,21 @@ function M.get_locations(opts)
 	end)
 
 	-- Format each bookmark
-	local lines = {}
-	for _, bookmark in ipairs(bookmarks) do
-		local relative_path = to_relative_path(bookmark.file)
-		local line_str = string.format("- @/%s :L%d", relative_path, bookmark.line)
+	local lines = vim
+		.iter(bookmarks)
+		---@param bookmark Bookmark
+		:map(function(bookmark)
+			local relative_path = to_relative_path(bookmark.file)
+			local line_str = string.format("- @/%s :L%d", relative_path, bookmark.line)
 
-		-- Append annotation if requested and exists
-		if append_annotations and bookmark.note and bookmark.note ~= "" then
-			line_str = line_str .. string.format(' - "%s"', bookmark.note)
-		end
+			-- Append annotation if requested and exists
+			if append_annotations and bookmark.note and bookmark.note ~= "" then
+				line_str = line_str .. string.format(' - "%s"', bookmark.note)
+			end
 
-		table.insert(lines, line_str)
-	end
+			return line_str
+		end)
+		:totable()
 
 	return table.concat(lines, "\n")
 end

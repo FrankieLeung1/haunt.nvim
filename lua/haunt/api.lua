@@ -586,14 +586,15 @@ function M.clear()
 		return false
 	end
 
-	-- Get bookmarks before clearing for visual cleanup
-	local bookmarks = store.get_all_raw()
-	local file_bookmarks = {}
-	for _, bookmark in ipairs(bookmarks) do
-		if bookmark.file == current_file then
-			table.insert(file_bookmarks, bookmark)
-		end
-	end
+	-- Live store references, not copies: the visual cleanup and delete hooks
+	-- below need identity with the stored bookmarks.
+	local file_bookmarks = vim
+		.iter(store.get_all_raw())
+		---@param bookmark Bookmark
+		:filter(function(bookmark)
+			return bookmark.file == current_file
+		end)
+		:totable()
 
 	-- early return for no bookmarks
 	if #file_bookmarks == 0 then
@@ -740,7 +741,7 @@ function M.delete_by_id(bookmark_id)
 	---@cast store -nil
 	---@cast hooks -nil
 
-	local bookmark, _ = store.find_by_id(bookmark_id)
+	local bookmark = store.find_by_id(bookmark_id)
 	if not bookmark then
 		vim.notify("haunt.nvim: Bookmark not found", vim.log.levels.WARN)
 		return false
@@ -773,6 +774,35 @@ function M.delete_by_id(bookmark_id)
 	return true
 end
 
+---@private
+local function attach_quickfix_refresh()
+	local qfbufnr = vim.fn.getqflist({ qfbufnr = 0 }).qfbufnr
+	if qfbufnr == 0 then
+		return
+	end
+
+	local augroup = vim.api.nvim_create_augroup("haunt_quickfix", { clear = true })
+	vim.api.nvim_create_autocmd("BufEnter", {
+		group = augroup,
+		buffer = qfbufnr,
+		callback = function()
+			local qf = vim.fn.getqflist({ all = 0 })
+			if type(qf.context) ~= "table" or qf.context["haunt.nvim"] ~= true then
+				return
+			end
+
+			-- Replacing the items refreshes stale quickfix text and integration caches.
+			local view = vim.fn.winsaveview()
+			vim.fn.setqflist({}, "u", {
+				id = qf.id,
+				items = qf.items,
+			})
+			vim.fn.winrestview(view)
+		end,
+		desc = "Refresh Haunt quickfix entries when focused",
+	})
+end
+
 --- Populate the quickfix list with haunt bookmarks.
 ---
 ---@param opts? QuickfixOpts Options for filtering and formatting
@@ -792,9 +822,11 @@ function M.to_quickfix(opts)
 	vim.fn.setqflist({}, " ", {
 		title = title,
 		items = items,
+		context = { ["haunt.nvim"] = true },
 	})
 
 	utils.toggle_quickfix()
+	attach_quickfix_refresh()
 
 	return true
 end
@@ -1028,7 +1060,7 @@ function M.change_data_dir(new_dir)
 	---@cast persistence -nil
 	---@cast hooks -nil
 
-	local old_dir = persistence.ensure_data_dir()
+	local old_dir = persistence.get_data_dir()
 
 	store.save()
 	persistence.set_data_dir(new_dir)
