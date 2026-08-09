@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.1](https://github.com/TheNoeTrevino/haunt.nvim/compare/v1.3.0...v1.3.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* bookmark navigation uses extmark-synced, re-sorted lines ([27ddabf](https://github.com/TheNoeTrevino/haunt.nvim/commit/27ddabf9bd2bbd7f783a41771aa2be8649edde9c))
+* quickfix items use extmark-synced bookmark lines ([d0869c2](https://github.com/TheNoeTrevino/haunt.nvim/commit/d0869c26831b3214b3fa2497bf3bfccbfc7dde5e)), closes [#99](https://github.com/TheNoeTrevino/haunt.nvim/issues/99)
+* refresh stale line numbers on focus ([5354283](https://github.com/TheNoeTrevino/haunt.nvim/commit/5354283d56d79ef57a0cf38f826b43e02ee780bb))
+* refresh stale line numbers on focus ([148e968](https://github.com/TheNoeTrevino/haunt.nvim/commit/148e968588448c3e67fb98ec55a885790269e139))
+* refresh stale quickfix entries on buffer enter ([5ec20c3](https://github.com/TheNoeTrevino/haunt.nvim/commit/5ec20c397300fb8daf911c41853aab9d475def2e))
+
 ## [1.3.0](https://github.com/TheNoeTrevino/haunt.nvim/compare/v1.2.1...v1.3.0) (2026-06-07)
 
 
