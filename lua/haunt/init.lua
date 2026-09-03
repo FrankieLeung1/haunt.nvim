@@ -241,19 +241,35 @@ function M._ensure_initialized()
 	display.setup_signs(config.get())
 end
 
+---@type boolean
+local _autocmds_setup = false
+
 ---@private
 function M._setup_restoration_autocmd()
+	if _autocmds_setup then
+		return
+	end
+	_autocmds_setup = true
+
 	require("haunt.project").setup_autocmds()
 	M.setup_autocmds()
 
 	local augroup = vim.api.nvim_create_augroup("haunt_restore", { clear = true })
-	vim.api.nvim_create_autocmd("BufReadPost", {
+	vim.api.nvim_create_autocmd({ "BufReadPost", "BufEnter", "FileChangedShellPost" }, {
 		group = augroup,
 		callback = function(args)
 			M._ensure_initialized()
 			require("haunt.api").restore_buffer_bookmarks(args.buf)
 		end,
-		desc = "Restore bookmark visuals when buffers are opened",
+		desc = "Restore and adapt bookmark visuals when buffers are opened, entered, or changed externally",
+	})
+
+	vim.api.nvim_create_autocmd("FocusGained", {
+		group = augroup,
+		callback = function()
+			pcall(vim.cmd, "checktime")
+		end,
+		desc = "Check for external file changes when Neovim gains focus",
 	})
 
 	-- Clean up restoration tracking when buffers are deleted
@@ -352,6 +368,15 @@ function M.setup(opts)
 	vim.schedule(function()
 		require("haunt.migration").auto_migrate()
 	end)
+
+	-- Ensure restoration autocmds are registered
+	if vim.v.vim_did_enter == 1 then
+		M._setup_restoration_autocmd()
+	else
+		vim.schedule(function()
+			M._setup_restoration_autocmd()
+		end)
+	end
 end
 
 --- Get the current configuration.

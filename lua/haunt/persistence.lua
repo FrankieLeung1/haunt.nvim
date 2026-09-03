@@ -15,6 +15,7 @@
 ---@field line number 1-based line number of the bookmark
 ---@field note string|nil Optional annotation text displayed as virtual text
 ---@field id string Unique bookmark identifier (auto-generated)
+---@field content? string|nil Content of the bookmarked line
 ---@field absolute? boolean Whether file is stored as absolute path (out-of-project)
 ---@field extmark_id number|nil Extmark ID for line tracking (internal)
 ---@field annotation_extmark_id number|nil Extmark ID for annotation display (internal)
@@ -28,7 +29,7 @@
 ---@field _get_v1_storage_path fun(repo_root: string, branch: string|nil, per_branch: boolean|nil): string
 ---@field save_bookmarks fun(bookmarks: Bookmark[], filepath?: string, project_root?: string|nil): boolean
 ---@field load_bookmarks fun(filepath?: string): Bookmark[]|nil
----@field create_bookmark fun(file: string, line: number, note?: string): Bookmark|nil, string|nil
+---@field create_bookmark fun(file: string, line: number, note?: string, content?: string): Bookmark|nil, string|nil
 ---@field is_valid_bookmark fun(bookmark: table): boolean
 ---@field _build_serializable fun(bookmarks: Bookmark[], project_root?: string|nil): table[]
 
@@ -37,7 +38,7 @@
 ---@diagnostic disable-next-line: missing-fields
 local M = {}
 
-local STORAGE_VERSION = 2
+local STORAGE_VERSION = 3
 local DEFAULT_BRANCH_KEY = "__default__"
 
 ---@private
@@ -140,11 +141,30 @@ function M._build_serializable(bookmarks, project_root)
 	local result = {}
 
 	for i, bookmark in ipairs(bookmarks) do
+		local content = bookmark.content
+		if content == nil then
+			local bufnr = vim.fn.bufnr(bookmark.file)
+			if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr) then
+				local lines = vim.api.nvim_buf_get_lines(bufnr, bookmark.line - 1, bookmark.line, false)
+				if lines and lines[1] then
+					content = lines[1]
+					bookmark.content = lines[1]
+				end
+			elseif vim.fn.filereadable(bookmark.file) == 1 then
+				local ok, lines = pcall(vim.fn.readfile, bookmark.file, "", bookmark.line)
+				if ok and lines and lines[bookmark.line] then
+					content = lines[bookmark.line]
+					bookmark.content = lines[bookmark.line]
+				end
+			end
+		end
+
 		local entry = {
 			file = bookmark.file,
 			line = bookmark.line,
 			note = bookmark.note,
 			id = bookmark.id,
+			content = content,
 		}
 
 		local relative = nil
@@ -336,7 +356,7 @@ function M.load_bookmarks(filepath)
 		return nil
 	end
 
-	if data.version == STORAGE_VERSION then
+	if data.version == 2 or data.version == STORAGE_VERSION then
 		if type(data.bookmarks) ~= "table" then
 			vim.notify("haunt.nvim: load_bookmarks: invalid bookmarks field (not a table)", vim.log.levels.ERROR)
 			return nil
@@ -362,9 +382,10 @@ end
 --- @param file string Absolute path to the file
 --- @param line number 1-based line number
 --- @param note? string Optional annotation text
+--- @param content? string Optional line content
 --- @return Bookmark|nil bookmark A new bookmark table, or nil if validation fails
 --- @return string|nil error_msg Error message if validation fails
-function M.create_bookmark(file, line, note)
+function M.create_bookmark(file, line, note, content)
 	-- Validate inputs
 	if type(file) ~= "string" or file == "" then
 		vim.notify("haunt.nvim: create_bookmark: file must be a non-empty string", vim.log.levels.ERROR)
@@ -381,10 +402,31 @@ function M.create_bookmark(file, line, note)
 		return nil, "note must be nil or a string"
 	end
 
+	if content ~= nil and type(content) ~= "string" then
+		vim.notify("haunt.nvim: create_bookmark: content must be nil or a string", vim.log.levels.ERROR)
+		return nil, "content must be nil or a string"
+	end
+
+	if content == nil then
+		local bufnr = vim.fn.bufnr(file)
+		if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr) then
+			local lines = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)
+			if lines and lines[1] then
+				content = lines[1]
+			end
+		elseif vim.fn.filereadable(file) == 1 then
+			local ok, lines = pcall(vim.fn.readfile, file, "", line)
+			if ok and lines and lines[line] then
+				content = lines[line]
+			end
+		end
+	end
+
 	return {
 		file = file,
 		line = line,
 		note = note,
+		content = content,
 		id = generate_bookmark_id(file, line),
 		extmark_id = nil, -- Will be set by display layer
 	}
@@ -414,6 +456,10 @@ function M.is_valid_bookmark(bookmark)
 
 	-- optional fields (nil | right type)
 	if bookmark.note ~= nil and type(bookmark.note) ~= "string" then
+		return false
+	end
+
+	if bookmark.content ~= nil and type(bookmark.content) ~= "string" then
 		return false
 	end
 

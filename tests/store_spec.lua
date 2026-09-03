@@ -423,6 +423,44 @@ describe("haunt.store", function()
 				"expected save to capture the extmark's current line, not the stale bookmark.line"
 			)
 		end)
+
+		it("syncs bookmark.content from the buffer before persisting", function()
+			local display = require("haunt.display")
+
+			local tmpfile = vim.fn.tempname() .. ".lua"
+			local bufnr = vim.api.nvim_create_buf(false, false)
+			vim.api.nvim_buf_set_name(bufnr, tmpfile)
+			vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, {
+				"line 1",
+				"line 2",
+				"line 3",
+			})
+
+			local extmark_id = display.set_bookmark_mark(bufnr, { line = 2 })
+			assert.is_not_nil(extmark_id)
+
+			store.add_bookmark({
+				file = tmpfile,
+				line = 2,
+				id = "content_sync_test",
+				extmark_id = extmark_id,
+			})
+
+			-- Edit the bookmarked line in the buffer
+			vim.api.nvim_buf_set_text(bufnr, 1, 0, 1, 6, { "modified line 2 content" })
+
+			store.save()
+
+			vim.api.nvim_buf_delete(bufnr, { force = true })
+
+			assert.is_not_nil(mock_persistence.saved_bookmarks)
+			assert.are.equal(1, #mock_persistence.saved_bookmarks)
+			assert.are.equal(
+				"modified line 2 content",
+				mock_persistence.saved_bookmarks[1].content,
+				"expected save to capture modified line content from buffer"
+			)
+		end)
 	end)
 
 	describe("load", function()

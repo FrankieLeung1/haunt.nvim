@@ -51,6 +51,7 @@ function M.reset_modules()
 	package.loaded["haunt.watcher"] = nil
 	package.loaded["haunt.hooks"] = nil
 	package.loaded["haunt.hook_events"] = nil
+	package.loaded["haunt.adaptation"] = nil
 end
 
 --- Setup haunt for testing with default config
@@ -337,7 +338,7 @@ function M.create_bookmarks_file(data_dir, bookmarks, storage_hash)
 	end
 
 	local data = {
-		version = 2,
+		version = 3,
 		bookmarks = serialized,
 	}
 	local json_str = vim.json.encode(data)

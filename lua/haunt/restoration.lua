@@ -97,22 +97,6 @@ function M.restore_buffer_bookmarks(bufnr, annotations_visible)
 		return true
 	end
 
-	-- Guard against race condition: check if buffer already restored
-	if restored_buffers[bufnr] then
-		return true
-	end
-
-	-- Mark buffer as restored before doing work to prevent concurrent restoration
-	restored_buffers[bufnr] = true
-
-	-- Additional safety check: verify no extmarks exist (shouldn't happen with guard above)
-	local extmarks = vim.api.nvim_buf_get_extmarks(bufnr, display.get_namespace(), 0, -1, { limit = 1 })
-
-	-- already restored
-	if #extmarks > 0 then
-		return true
-	end
-
 	local filepath = utils.normalize_filepath(vim.api.nvim_buf_get_name(bufnr))
 	if filepath == "" then
 		return true
@@ -132,6 +116,36 @@ function M.restore_buffer_bookmarks(bufnr, annotations_visible)
 		return true
 	end
 
+	local config = require("haunt.config").get()
+	local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+
+	-- Check if adaptation is enabled and any bookmark needs relocation
+	local needs_adaptation = false
+	if config.adapt_to_file_changes ~= false and #lines > 0 then
+		for _, bookmark in ipairs(buffer_bookmarks) do
+			if bookmark.content and (bookmark.line < 1 or bookmark.line > #lines or lines[bookmark.line] ~= bookmark.content) then
+				needs_adaptation = true
+				break
+			end
+		end
+	end
+
+	-- If already restored and no bookmark moved or changed, skip to avoid redundant work
+	if restored_buffers[bufnr] and not needs_adaptation then
+		return true
+	end
+
+	-- Mark buffer as restored to prevent concurrent restoration during async operations
+	restored_buffers[bufnr] = true
+
+	local adapted_count = 0
+	if needs_adaptation then
+		local adaptation = require("haunt.adaptation")
+		adapted_count = adaptation.adapt_bookmarks_for_lines(lines, buffer_bookmarks, {
+			threshold = config.content_similarity_threshold,
+		})
+	end
+
 	-- Restore visual elements for each bookmark
 	local success = true
 	for _, bookmark in ipairs(buffer_bookmarks) do
@@ -149,6 +163,11 @@ function M.restore_buffer_bookmarks(bufnr, annotations_visible)
 		success = false
 
 		::continue::
+	end
+
+	-- Save updated bookmarks to disk after extmarks have been re-anchored at new positions
+	if adapted_count > 0 then
+		store.save()
 	end
 
 	---@cast hooks -nil

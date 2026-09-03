@@ -9,6 +9,7 @@ local files = {
 	"lua/haunt/config.lua", -- Configuration options
 	"lua/haunt/api.lua", -- Public API functions
 	"lua/haunt/persistence.lua", -- Bookmark structure
+	"lua/haunt/adaptation.lua", -- Bookmark adaptation
 	"lua/haunt/picker/init.lua", -- Picker integration
 	"lua/haunt/sidekick.lua", -- Sidekick integration
 	"plugin/haunt.lua", -- Commands

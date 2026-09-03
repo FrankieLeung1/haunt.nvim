@@ -224,4 +224,22 @@ describe("haunt.config", function()
 			assert.are.equal("/custom/path", cfg.data_dir)
 		end)
 	end)
+
+	describe("adaptation configuration", function()
+		it("defaults to enabled with 0.6 similarity threshold", function()
+			local cfg = config.get()
+			assert.is_true(cfg.adapt_to_file_changes)
+			assert.are.equal(0.6, cfg.content_similarity_threshold)
+		end)
+
+		it("allows customizing adaptation settings", function()
+			config.setup({
+				adapt_to_file_changes = false,
+				content_similarity_threshold = 0.8,
+			})
+			local cfg = config.get()
+			assert.is_false(cfg.adapt_to_file_changes)
+			assert.are.equal(0.8, cfg.content_similarity_threshold)
+		end)
+	end)
 end)

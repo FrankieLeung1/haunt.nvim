@@ -320,6 +320,29 @@ describe("haunt.persistence", function()
 			assert.is_nil(bookmark.note)
 		end)
 
+		it("creates bookmark with explicit line content", function()
+			local bookmark = persistence.create_bookmark("/tmp/test.lua", 10, "A note", "local x = 42")
+			assert.are.equal("local x = 42", bookmark.content)
+		end)
+
+		it("auto-detects line content from open buffer when content is nil", function()
+			local bufnr = vim.api.nvim_create_buf(false, false)
+			local test_file = "/tmp/haunt_test_content_" .. os.time() .. ".lua"
+			vim.api.nvim_buf_set_name(bufnr, test_file)
+			vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { "first line", "second line", "third line" })
+
+			local bookmark = persistence.create_bookmark(test_file, 2, "Note")
+			vim.api.nvim_buf_delete(bufnr, { force = true })
+
+			assert.are.equal("second line", bookmark.content)
+		end)
+
+		it("rejects non-string content in create_bookmark", function()
+			local bookmark, err = persistence.create_bookmark("/tmp/test.lua", 1, "note", 123)
+			assert.is_nil(bookmark)
+			assert.is_not_nil(err)
+		end)
+
 		it("generates unique IDs", function()
 			local b1 = persistence.create_bookmark("/tmp/test.lua", 1)
 			local b2 = persistence.create_bookmark("/tmp/test.lua", 1)
@@ -329,8 +352,9 @@ describe("haunt.persistence", function()
 
 	describe("is_valid_bookmark", function()
 		local valid_cases = {
-			{ desc = "full bookmark", bookmark = { file = "/test.lua", line = 1, id = "abc", note = "note" }, valid = true },
+			{ desc = "full bookmark", bookmark = { file = "/test.lua", line = 1, id = "abc", note = "note", content = "local a = 1" }, valid = true },
 			{ desc = "without note", bookmark = { file = "/test.lua", line = 1, id = "abc" }, valid = true },
+			{ desc = "with empty content string", bookmark = { file = "/test.lua", line = 1, id = "abc", content = "" }, valid = true },
 		}
 
 		local invalid_cases = {
@@ -342,6 +366,11 @@ describe("haunt.persistence", function()
 			{
 				desc = "absolute as string",
 				bookmark = { file = "/test.lua", line = 1, id = "abc", absolute = "yes" },
+				valid = false,
+			},
+			{
+				desc = "content as number",
+				bookmark = { file = "/test.lua", line = 1, id = "abc", content = 123 },
 				valid = false,
 			},
 		}
@@ -411,7 +440,7 @@ describe("haunt.persistence", function()
 			end
 		end)
 
-		it("saves bookmarks to disk in v2 format", function()
+		it("saves bookmarks to disk in v3 format", function()
 			local bookmarks = {
 				persistence.create_bookmark("/tmp/file1.lua", 10, "First"),
 				persistence.create_bookmark("/tmp/file2.lua", 20, "Second"),
@@ -423,11 +452,40 @@ describe("haunt.persistence", function()
 			assert.are.equal(1, vim.fn.filereadable(test_file))
 
 			local data = read_raw(test_file)
-			assert.are.equal(2, data.version)
+			assert.are.equal(3, data.version)
 			assert.are.equal(3, #data.bookmarks)
 			assert.are.equal(bookmarks[1].line, data.bookmarks[1].line)
 			assert.are.equal(bookmarks[1].note, data.bookmarks[1].note)
 			assert.are.equal(bookmarks[1].id, data.bookmarks[1].id)
+		end)
+
+		it("round-trips bookmarks with content through save and load", function()
+			local bookmarks = {
+				persistence.create_bookmark("/tmp/file1.lua", 10, "First", "local a = 1"),
+				persistence.create_bookmark("/tmp/file2.lua", 20, "Second", "local b = 2"),
+				persistence.create_bookmark("/tmp/file3.lua", 30, nil, "local c = 3"),
+			}
+
+			local save_ok = persistence.save_bookmarks(bookmarks, test_file)
+			assert.is_true(save_ok)
+
+			local data = read_raw(test_file)
+			assert.are.equal(3, data.version)
+			assert.are.equal("local a = 1", data.bookmarks[1].content)
+			assert.are.equal("local b = 2", data.bookmarks[2].content)
+			assert.are.equal("local c = 3", data.bookmarks[3].content)
+
+			local loaded = persistence.load_bookmarks(test_file)
+			assert.is_table(loaded)
+			assert.are.equal(3, #loaded)
+
+			for i = 1, 3 do
+				assert.are.equal(bookmarks[i].file, loaded[i].file)
+				assert.are.equal(bookmarks[i].line, loaded[i].line)
+				assert.are.equal(bookmarks[i].note, loaded[i].note)
+				assert.are.equal(bookmarks[i].id, loaded[i].id)
+				assert.are.equal(bookmarks[i].content, loaded[i].content)
+			end
 		end)
 
 		it("round-trips bookmarks through save and load", function()
@@ -492,7 +550,7 @@ describe("haunt.persistence", function()
 			assert.is_true(save_ok)
 
 			local data = read_raw(test_file)
-			assert.are.equal(2, data.version)
+			assert.are.equal(3, data.version)
 			assert.are.equal(100, #data.bookmarks)
 
 			local loaded = persistence.load_bookmarks(test_file)
@@ -540,7 +598,7 @@ describe("haunt.persistence", function()
 		end)
 	end)
 
-	describe("v2 storage format", function()
+	describe("v3 storage format", function()
 		local project_mock = require("tests.helpers.project_mock")
 		local test_file
 
@@ -556,7 +614,7 @@ describe("haunt.persistence", function()
 		before_each(function()
 			local test_dir = vim.fn.stdpath("data") .. "/haunt/test/"
 			vim.fn.mkdir(test_dir, "p")
-			test_file = test_dir .. "test_v2_" .. os.time() .. "_" .. math.random(1, 1000000) .. ".json"
+			test_file = test_dir .. "test_v3_" .. os.time() .. "_" .. math.random(1, 1000000) .. ".json"
 		end)
 
 		after_each(function()
@@ -577,11 +635,25 @@ describe("haunt.persistence", function()
 			assert.is_true(persistence.save_bookmarks(bookmarks, test_file))
 
 			local data = read_raw(test_file)
-			assert.are.equal(2, data.version)
+			assert.are.equal(3, data.version)
 			assert.are.equal("src/main.lua", data.bookmarks[1].file)
 			-- absolute is omitted (or false-equivalent) for in-project bookmarks
 			assert.is_true(data.bookmarks[1].absolute == nil or data.bookmarks[1].absolute == false)
 			assert.are.equal("lib/util.lua", data.bookmarks[2].file)
+		end)
+
+		it("serializes line content in v3 format", function()
+			project_mock.set({ root = "/fake/proj", branch = "main", project_id = "fake" })
+
+			local bookmarks = {
+				{ file = "/fake/proj/src/main.lua", line = 10, id = "id1", content = "local x = 100" },
+			}
+
+			assert.is_true(persistence.save_bookmarks(bookmarks, test_file))
+
+			local data = read_raw(test_file)
+			assert.are.equal(3, data.version)
+			assert.are.equal("local x = 100", data.bookmarks[1].content)
 		end)
 
 		it("preserves absolute path for bookmarks flagged absolute=true", function()
@@ -594,7 +666,7 @@ describe("haunt.persistence", function()
 			assert.is_true(persistence.save_bookmarks(bookmarks, test_file))
 
 			local data = read_raw(test_file)
-			assert.are.equal(2, data.version)
+			assert.are.equal(3, data.version)
 			assert.are.equal("/etc/hosts", data.bookmarks[1].file)
 			assert.is_true(data.bookmarks[1].absolute)
 		end)
@@ -612,7 +684,7 @@ describe("haunt.persistence", function()
 			assert.is_true(persistence.save_bookmarks(bookmarks, test_file))
 
 			local data = read_raw(test_file)
-			assert.are.equal(2, data.version)
+			assert.are.equal(3, data.version)
 			assert.are.equal("/etc/hosts", data.bookmarks[1].file)
 			assert.is_true(data.bookmarks[1].absolute)
 		end)
@@ -647,7 +719,7 @@ describe("haunt.persistence", function()
 			assert.is_true(persistence.save_bookmarks(bookmarks, test_file))
 
 			local data = read_raw(test_file)
-			assert.are.equal(2, data.version)
+			assert.are.equal(3, data.version)
 			assert.are.equal("/some/path/file.lua", data.bookmarks[1].file)
 			assert.is_true(data.bookmarks[1].absolute)
 		end)

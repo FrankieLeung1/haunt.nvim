@@ -255,6 +255,16 @@ describe("haunt.api", function()
 			assert.are.equal("Direct annotation", bookmarks[1].note)
 		end)
 
+		it("captures line content when creating bookmark", function()
+			vim.api.nvim_win_set_cursor(0, { 1, 0 })
+
+			api.annotate("Direct annotation")
+
+			local bookmarks = api.get_bookmarks()
+			assert.are.equal(1, #bookmarks)
+			assert.are.equal("Line 1", bookmarks[1].content)
+		end)
+
 		it("returns false on empty input (cancel)", function()
 			vim.api.nvim_win_set_cursor(0, { 1, 0 })
 			vim.fn.input = function()

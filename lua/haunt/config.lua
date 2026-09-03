@@ -36,6 +36,8 @@ M.DEFAULT_DATA_DIR = vim.fn.stdpath("data") .. "/haunt/"
 ---@field picker? "snacks"|"telescope"|"fzf"|"auto" Which picker to use: "snacks", "telescope", "fzf", or "auto" (default: "auto"). "auto" tries Snacks first, then Telescope, then fzf-lua, then vim.ui.select
 ---@field picker_keys table<string, table> Keybindings for picker actions (default: {delete = {key = 'd', mode = {'n'}}, edit_annotation = {key = 'a', mode = {'n'}}})
 ---@field per_branch_bookmarks? boolean Whether bookmarks are scoped per git branch (default: true). When false, bookmarks persist across all branches in the same repository.
+---@field adapt_to_file_changes? boolean Whether bookmarks adapt to external file changes using line contents (default: true)
+---@field content_similarity_threshold? number Minimum similarity (0.0 to 1.0) required to match a modified line (default: 0.6)
 --minidoc_replace_start M.DEFAULT = {
 M.DEFAULT = {
 	--minidoc_replace_end
@@ -50,6 +52,8 @@ M.DEFAULT = {
 	above_border = "rounded",
 	data_dir = nil,
 	per_branch_bookmarks = true,
+	adapt_to_file_changes = true,
+	content_similarity_threshold = 0.6,
 	picker = "auto",
 	picker_keys = {
 		delete = { key = "d", mode = { "n" } },

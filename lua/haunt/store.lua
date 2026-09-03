@@ -365,6 +365,19 @@ function M.save()
 	-- serializes those snapshots. This is the only writer of snapshot state.
 	local synced = synced_bookmarks()
 
+	-- Refresh line content for bookmarks that are currently tracked by an extmark
+	for _, bm in ipairs(synced) do
+		if bm.extmark_id then
+			local bufnr = vim.fn.bufnr(bm.file)
+			if bufnr ~= -1 and vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr) then
+				local lines = vim.api.nvim_buf_get_lines(bufnr, bm.line - 1, bm.line, false)
+				if lines and lines[1] then
+					bm.content = lines[1]
+				end
+			end
+		end
+	end
+
 	hooks.emit_pre_save({
 		bookmarks = synced,
 		count = #synced,

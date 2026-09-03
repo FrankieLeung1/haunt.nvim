@@ -220,7 +220,7 @@ describe("change_data_dir", function()
 				assert.is_not_nil(saved_data.bookmarks)
 				assert.are.equal(1, #saved_data.bookmarks)
 				assert.are.equal("Save me before switch", saved_data.bookmarks[1].note)
-				assert.are.equal(2, saved_data.version)
+				assert.are.equal(3, saved_data.version)
 			end)
 
 			it("sets new data_dir in persistence", function()

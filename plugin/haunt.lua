@@ -16,6 +16,7 @@
 --- `:HauntChangeDataDir [path]` - Change bookmark data directory (for project-specific bookmarks)
 --- `:HauntMigrate` - Migrate bookmarks from v1 to v2 storage (project-relative paths)
 --- `:HauntReload` - Reload bookmarks from disk (e.g. after switching branches externally)
+--- `:HauntAdapt` - Adapt bookmarks to file changes in current buffer
 ---
 
 -- haunt.nvim plugin loader
@@ -46,6 +47,7 @@ local commands = {
 	HauntQfAll = { fn = "to_quickfix", desc = "Send All Annotations to Quickfix List" },
 	HauntChangeDataDir = { fn = "change_data_dir", desc = "Change bookmark data directory", has_args = true },
 	HauntReload = { fn = "reload", desc = "Reload bookmarks from disk" },
+	HauntAdapt = { fn = "adapt", desc = "Adapt bookmarks to file changes in current buffer" },
 }
 
 for name, info in pairs(commands) do
@@ -71,11 +73,15 @@ vim.api.nvim_create_user_command("HauntMigrate", function()
 end, { desc = "Migrate bookmarks from v1 to v2 storage (project-relative paths)" })
 
 -- Deferred restoration setup. Dashboard plugins seemingly block this
-vim.api.nvim_create_autocmd("UIEnter", {
-	once = true,
-	callback = function()
-		vim.schedule(function()
-			require("haunt")._setup_restoration_autocmd()
-		end)
-	end,
-})
+if vim.v.vim_did_enter == 1 then
+	require("haunt")._setup_restoration_autocmd()
+else
+	vim.api.nvim_create_autocmd("UIEnter", {
+		once = true,
+		callback = function()
+			vim.schedule(function()
+				require("haunt")._setup_restoration_autocmd()
+			end)
+		end,
+	})
+end

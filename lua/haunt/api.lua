@@ -155,8 +155,16 @@ local function create_and_persist_bookmark(bufnr, filepath, line, note)
 	---@cast persistence -nil
 	---@cast hooks -nil
 
+	local line_content = nil
+	if bufnr and vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr) then
+		local lines = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)
+		if lines and lines[1] then
+			line_content = lines[1]
+		end
+	end
+
 	-- Create bookmark with unique ID
-	local new_bookmark, err = persistence.create_bookmark(filepath, line, note)
+	local new_bookmark, err = persistence.create_bookmark(filepath, line, note, line_content)
 	if not new_bookmark then
 		vim.notify("haunt.nvim: Failed to create bookmark: " .. (err or "unknown error"), vim.log.levels.ERROR)
 		return false
@@ -234,11 +242,20 @@ local function update_bookmark_annotation(bufnr, line, bookmark, new_note)
 	---@cast hooks -nil
 
 	local old_note = bookmark.note
+	local old_content = bookmark.content
 	local old_annotation_extmark_id = bookmark.annotation_extmark_id
 
 	-- Hide old annotation if it exists
 	if old_annotation_extmark_id then
 		display.hide_annotation(bufnr, old_annotation_extmark_id)
+	end
+
+	-- Update line content from buffer if valid and loaded
+	if bufnr and vim.api.nvim_buf_is_valid(bufnr) and vim.api.nvim_buf_is_loaded(bufnr) then
+		local lines = vim.api.nvim_buf_get_lines(bufnr, line - 1, line, false)
+		if lines and lines[1] then
+			bookmark.content = lines[1]
+		end
 	end
 
 	-- Show new annotation and update bookmark
@@ -251,6 +268,7 @@ local function update_bookmark_annotation(bufnr, line, bookmark, new_note)
 	if not save_ok then
 		-- Rollback
 		bookmark.note = old_note
+		bookmark.content = old_content
 		bookmark.annotation_extmark_id = old_annotation_extmark_id
 		if new_extmark_id then
 			display.hide_annotation(bufnr, new_extmark_id)
@@ -1128,6 +1146,27 @@ function M.refresh_above_annotations()
 
 		::continue::
 	end
+end
+
+--- Adapt bookmarks to file changes in the current buffer (or specified buffer).
+--- Uses saved line contents to find new lines if lines were added, removed, or modified externally.
+---@param bufnr? number Optional buffer number (defaults to current buffer)
+---@return number adapted_count Number of bookmarks that were relocated
+---@return AdaptationChange[] changes Array of change records
+function M.adapt(bufnr)
+	ensure_modules()
+	bufnr = bufnr or vim.api.nvim_get_current_buf()
+	local adaptation = require("haunt.adaptation")
+	local cfg = require("haunt.config").get()
+	local count, changes = adaptation.adapt_buffer_bookmarks(bufnr, {
+		threshold = cfg.content_similarity_threshold,
+	})
+	if count > 0 then
+		local restoration = require("haunt.restoration")
+		restoration.cleanup_buffer_tracking(bufnr)
+		restoration.restore_buffer_bookmarks(bufnr, _annotations_visible)
+	end
+	return count, changes
 end
 
 function M._reset_for_testing()
